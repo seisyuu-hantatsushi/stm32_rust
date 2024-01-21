@@ -3,15 +3,16 @@
 #![no_std]
 
 
-// Print panic message to probe console
-use panic_probe as _;
-
-
 use cortex_m_rt::entry;
 use stm32f4xx_hal::{
     pac,
     prelude::*,
 };
+
+// Print panic message to probe console
+use panic_probe as _;
+use rtt_target::{rprintln, rtt_init_print, ChannelMode::BlockIfFull};
+
 
 #[allow(clippy::empty_loop)]
 #[entry]
@@ -20,6 +21,8 @@ fn main() -> ! {
         pac::Peripherals::take(),
         cortex_m::peripheral::Peripherals::take(),
     ) {
+	rtt_init_print!(BlockIfFull);
+	rprintln!("hello from RTT");
         // Set up the LED. On the Nucleo-446RE it's connected to pin PA5.
         let gpiod = dp.GPIOD.split();
         let mut led = gpiod.pd12.into_push_pull_output();
