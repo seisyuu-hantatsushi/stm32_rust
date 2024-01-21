@@ -22,10 +22,12 @@ fn main() -> ! {
     let dp = pac::Peripherals::take().unwrap();
 
     // Constrain and Freeze power
+    info!("Setup PWR...                  ");
     let pwr = dp.PWR.constrain();
     let pwrcfg = example_power!(pwr).freeze();
 
     // Constrain and Freeze clock
+    info!("Setup RCC...                  ");
     let rcc = dp.RCC.constrain();
     let ccdr = rcc.sys_ck(100.MHz()).freeze(pwrcfg, &dp.SYSCFG);
 
@@ -37,6 +39,7 @@ fn main() -> ! {
     // Get the delay provider.
     let mut delay = cp.SYST.delay(ccdr.clocks);
 
+    info!("start blinking LD1                  ");
     loop {
         led.set_high();
         delay.delay_ms(500_u16);
