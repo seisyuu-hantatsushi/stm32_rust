@@ -1,0 +1,19 @@
+[package]
+name = "nucleo-h755zi-q-cm7_single_ledblink"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+default = ["log-rtt"]
+log-rtt = []
+
+[dependencies]
+cortex-m = "0.7"
+cortex-m-rt = "0.7"
+log = "0.4"
+rtt-target = { version = "0.5.0" }
+cfg-if="1.0.0"
+panic-rtt-target = { version = "0.1.0", features = ["cortex-m"] }
+stm32h7xx-hal = { version = "0.15.1", features = [ "stm32h747cm7", "rt" ] }
