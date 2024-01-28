@@ -1,0 +1,20 @@
+FROM ubuntu:latest
+
+RUN apt update && apt install
+RUN apt install -y build-essential
+RUN apt install -y python-pip
+RUN apt install -y curl
+
+ARG USERNAME=kaz
+ARG GROUPNAME=kaz
+ARG UID=1000
+ARG GID=1000
+RUN groupadd -g $GID $GROUPNAME && useradd -m -s /bin/bash -u $UID -g $GID $USERNAME
+USER $USERNAME
+WORKDIR /home/kaz
+
+RUN mkdir work
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > rustup.sh
+RUN sh rustup.sh -y
+ENV PATH $PATH:$HOME/.cargo/bin
+RUN ./.cargo/bin/rustup target add thumbv7em-none-eabihf
