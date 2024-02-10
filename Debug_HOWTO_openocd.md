@@ -26,7 +26,6 @@
 - starting rtt server by openocd console
   ```
   > rtt setup 0x20000000 1072 "SEGGER RTT"
-  > rtt stop
   > rtt start
   rtt: Searching for control block 'SEGGER RTT'
   rtt: Control block found at 0x20000000
