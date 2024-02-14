@@ -20,4 +20,5 @@ rtt-target = { version = "0.5.0" }
 cfg-if="1.0.0"
 panic-rtt-target = { version = "0.1.0", features = ["cortex-m"] }
 panic-halt = "0.2.0"
-stm32h7xx-hal = { version = "0.15.1", features = [ "stm32h747cm7", "rt" ] }
+# stm32h7xx-hal = { version = "0.15.1", features = [ "stm32h747cm7", "rt" ] }
+stm32h7xx-hal = { path = "../../../stm32h7xx-hal", features = [ "stm32h747cm7", "rt" ] }
