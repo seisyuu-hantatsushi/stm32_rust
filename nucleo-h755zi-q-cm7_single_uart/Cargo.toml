@@ -1,0 +1,25 @@
+[package]
+name = "nucleo-h755zi-q-cm7_single_uart"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+default = ["log-rtt", "smps", "example-smps"]
+log-rtt = []
+smps = []
+example-smps = []
+example-ldo = []
+
+[dependencies]
+cortex-m = "0.7.4"
+cortex-m-rt = "0.7.1"
+log = "0.4"
+rtt-target = { version = "0.5.0" }
+cfg-if="1.0.0"
+panic-rtt-target = { version = "0.1.0", features = ["cortex-m"] }
+panic-halt = "0.2.0"
+nb = "1.1.0"
+#stm32h7xx-hal = { version = "0.15.1", features = [ "stm32h747cm7", "rt" ] }
+stm32h7xx-hal = { path = "../../stm32h7xx-hal", features = [ "stm32h747cm7", "rt" ] }
