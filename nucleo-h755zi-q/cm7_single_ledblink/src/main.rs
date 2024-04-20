@@ -18,7 +18,7 @@ fn main() -> ! {
     //rtt_init_print!(BlockIfFull);
     info!("wake cm7");
 
-    let cp = cortex_m::Peripherals::take().unwrap();
+    let cp = unsafe { cortex_m::Peripherals::steal() };
     let dp = unsafe { pac::Peripherals::steal() };
 
     // Constrain and Freeze power
