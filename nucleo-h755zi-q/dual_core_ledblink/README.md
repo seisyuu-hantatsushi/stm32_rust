@@ -56,7 +56,7 @@ run "cargo build" at "cm4_ledblink" and "cm7_ledblink" directories.
    ```
 3. connect gdb to cm4 and write binary in flash.
    - Same procedure as CM7, but the connection port is 3334.
-4. start cm7 and cm4 by gdb continue command.
+4. start cm7 and cm4 with gdb continue command.
 
 ## Memory Map
 |Memory|Size|Address|Cortex-M7|Cortex-M4|Note|
