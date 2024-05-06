@@ -1,3 +1,8 @@
+# STM32H745/STM32H755 dual core example
+
+## Checked Boards
+- NUCLEO-H755ZI-Q(MB1363)
+
 ## Memory Map
 |Memory|Size|Address|Cortex-M7|Cortex-M4|Note|
 |:-|:-|:-|:-|:-|:-|
