@@ -2,8 +2,8 @@ FROM ubuntu:latest
 
 RUN apt update && apt install
 RUN apt install -y build-essential
-RUN apt install -y python-pip
-RUN apt install -y curl
+RUN apt install -y python3-pip
+RUN apt install -y curl zip
 
 ARG USERNAME=kaz
 ARG GROUPNAME=kaz
@@ -16,5 +16,9 @@ WORKDIR /home/kaz
 RUN mkdir work
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > rustup.sh
 RUN sh rustup.sh -y
-ENV PATH $PATH:$HOME/.cargo/bin
 RUN ./.cargo/bin/rustup target add thumbv7em-none-eabihf
+RUN ./.cargo/bin/cargo install --version 0.24.1 svd2rust
+RUN ./.cargo/bin/cargo install form
+RUN pip install --user svdtools
+RUN echo "source $HOME/.cargo/env" >> ./.bashrc
+RUN echo "export PATH=$HOME/.local/bin:$PATH" >> ./.bashrc
