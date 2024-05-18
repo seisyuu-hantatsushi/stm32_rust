@@ -21,7 +21,7 @@ use embedded_lib::console;
 mod utilities;
 
 static SEC_COUNTER: AtomicU32 = AtomicU32::new(0);
-static TIMER: cm_interrupt::Mutex<RefCell<Option<timer::Timer<pac::TIM3>>>> =
+static TIMER: cm_interrupt::Mutex<RefCell<Option<timer::Timer<pac::TIM2>>>> =
     cm_interrupt::Mutex::new(RefCell::new(None));
 static LED_BLINK: cm_interrupt::Mutex<RefCell<bool>> =
     cm_interrupt::Mutex::new(RefCell::new(false));
@@ -91,7 +91,7 @@ fn main() -> ! {
 
     let _ = writeln!(usart_tx, "hello, I'm cm7.\r");
 
-    let mut timer = dp.TIM3.timer(1.Hz(), ccdr.peripheral.TIM3, &ccdr.clocks);
+    let mut timer = dp.TIM2.timer(1.Hz(), ccdr.peripheral.TIM2, &ccdr.clocks);
     timer.listen(timer::Event::TimeOut); //Enable Interrupt
     timer.start(MilliSeconds::from_ticks(1000).into_rate());
 
@@ -100,8 +100,8 @@ fn main() -> ! {
     });
 
     unsafe {
-        cp.NVIC.set_priority(interrupt::TIM3, 1);
-        NVIC::unmask::<stm32h7xx_hal::interrupt>(interrupt::TIM3);
+        cp.NVIC.set_priority(interrupt::TIM2, 1);
+        NVIC::unmask::<stm32h7xx_hal::interrupt>(interrupt::TIM2);
     }
 
     // Configure PB0 as output.
@@ -146,7 +146,7 @@ fn main() -> ! {
 }
 
 #[stm32h7xx_hal::interrupt]
-fn TIM3() {
+fn TIM2() {
     SEC_COUNTER.fetch_add(1, Ordering::SeqCst);
     cortex_m::interrupt::free(|cs| {
         let mut rc = TIMER.borrow(cs).borrow_mut();
