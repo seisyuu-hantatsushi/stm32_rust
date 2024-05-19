@@ -10,7 +10,7 @@
 use core::{
     fmt::Write,
     cell::RefCell,
-    sync::atomic::{AtomicU32, Ordering},
+    sync::atomic::{AtomicU32, AtomicBool, Ordering},
 };
 
 use cortex_m_rt::entry;
@@ -18,17 +18,25 @@ use cortex_m::interrupt as cm_interrupt;
 use cortex_m::peripheral::NVIC;
 use stm32h7xx_hal::{pac, interrupt, rcc, pwr, timer, hsem, exti, block, prelude::* };
 use stm32h7xx_hal::time::MilliSeconds;
-use log::info;
-use embedded_lib::console;
+use log::{info,debug};
+use embedded_lib::{console,shared_ringbuffer};
 
 #[link_section = ".sram2"]
 static mut CONSOLE_BUFFER: [u8; 1024] = [0u8; 1024];
+
+const SHARED_RINGBUFFER: *mut u32 = 0x10040000 as *mut u32; // in D2 Domain, Write-Through
+const SHARED_RINGBUFFER_SIZE: u32 = 512+1024*8;
 
 #[macro_use]
 mod utilities;
 
 static SEC_COUNTER: AtomicU32 = AtomicU32::new(0);
+static MESSAGE_NOTIFY: AtomicBool = AtomicBool::new(false);
 static HSEM_CH0: cm_interrupt::Mutex<RefCell<Option<hsem::Sema>>> =
+    cm_interrupt::Mutex::new(RefCell::new(None));
+static HSEM_CH1: cm_interrupt::Mutex<RefCell<Option<hsem::Sema>>> =
+    cm_interrupt::Mutex::new(RefCell::new(None));
+static HSEM_CH2: cm_interrupt::Mutex<RefCell<Option<hsem::Sema>>> =
     cm_interrupt::Mutex::new(RefCell::new(None));
 static TIMER: cm_interrupt::Mutex<RefCell<Option<timer::Timer<pac::TIM3>>>> =
     cm_interrupt::Mutex::new(RefCell::new(None));
@@ -75,6 +83,23 @@ fn main() -> ! {
 
     let clocks = rcc.get_frozen_core_clocks().expect("could not get clocks");
 
+    let mut sem1 = hsem.sema(1);
+    let mut shared_ringbuffer = unsafe {
+        let ptr : *mut u8 = SHARED_RINGBUFFER as *mut u8;
+        ptr.write_bytes(0, SHARED_RINGBUFFER_SIZE as usize);
+        shared_ringbuffer::SharedRingBuffer::<1024,8,fn(),fn()>::assign(SHARED_RINGBUFFER,
+                                                                        SHARED_RINGBUFFER_SIZE,
+                                                                        None::<(fn(),fn())>)
+    };
+    sem1.fast_take();
+    sem1.release(0);
+
+    let sem2 = hsem.sema(2);
+    cm_interrupt::free(|cs| {
+        HSEM_CH2.borrow(cs).replace(Some(sem2));
+        HSEM_CH2.borrow(cs).borrow_mut().as_mut().unwrap().enable_irq();
+    });
+
     // GPIOD was reseted by CM7
     let gpiod = dp.GPIOD.split_without_reset(prec.GPIOD);
     let gpioe = dp.GPIOE.split(prec.GPIOE);
@@ -119,7 +144,8 @@ fn main() -> ! {
             },
             move |c| {
                 block!(usart_tx.write(c)).ok();
-            })
+            },
+            None::<fn(&str)>)
         };
 
     // Configure PE1 as output.
@@ -143,19 +169,43 @@ fn main() -> ! {
             }
             prev_blink = current;
         });
+
         console.input();
+
+        if let Ok(notify) = MESSAGE_NOTIFY.fetch_update(Ordering::SeqCst,
+                                                        Ordering::SeqCst,
+                                                        |notify| if notify {
+                                                            Some(false)
+                                                        }
+                                                        else {
+                                                            None
+                                                        }){
+            if notify {
+                let p = shared_ringbuffer.read();
+                //let mut buf : [u8;128] = [0u8;128];
+                console.output("notify\r\n");
+                //write!(console,"notify {},{}\r\n", p.0, p.1);
+            }
+        }
     }
-
 }
-
-
-
 
 #[stm32h7xx_hal::interrupt]
 fn HSEM1() {
-    info!("HSEM1 fire!");
+    //debug!("HSEM1 fired!");
     cm_interrupt::free(|cs| {
-        HSEM_CH0.borrow(cs).borrow_mut().as_mut().unwrap().clear_irq();
+        let mut binding = HSEM_CH0.borrow(cs).borrow_mut();
+        let sem0 = binding.as_mut().unwrap();
+        if sem0.status_irq() {
+            sem0.clear_irq()
+        };
+        let mut binding = HSEM_CH2.borrow(cs).borrow_mut();
+        if let Some(sem2) = binding.as_mut(){
+            if sem2.status_irq() {
+                MESSAGE_NOTIFY.store(true,Ordering::SeqCst);
+                sem2.clear_irq()
+            };
+        };
     });
 }
 
