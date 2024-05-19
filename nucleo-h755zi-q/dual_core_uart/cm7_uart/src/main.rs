@@ -11,11 +11,10 @@ use core::{
 use cortex_m_rt::entry;
 use cortex_m::interrupt as cm_interrupt;
 use cortex_m::peripheral::NVIC;
-use stm32h7xx_hal::{pac, interrupt, timer, prelude::*};
+use stm32h7xx_hal::{pac, interrupt, timer, block, prelude::*};
 use stm32h7xx_hal::time::MilliSeconds;
-use stm32h7xx_hal::block;
 use log::{info,debug};
-use embedded_lib::console;
+use embedded_lib::{console,shared_ringbuffer};
 
 #[macro_use]
 mod utilities;
@@ -28,6 +27,9 @@ static LED_BLINK: cm_interrupt::Mutex<RefCell<bool>> =
 
 #[link_section = ".axisram"]
 static mut CONSOLE_BUFFER: [u8; 1024] = [0u8; 1024];
+
+const SHARED_RINGBUFFER: *mut u32 = 0x10040000 as *mut u32; // in D2 Domain, Write-Through
+const SHARED_RINGBUFFER_SIZE: u32 = 512+1024*8;
 
 #[allow(dead_code)]
 fn type_of<T>(_: &T) -> &'static str {
@@ -66,13 +68,32 @@ fn main() -> ! {
 
     let hsem = dp.HSEM.hsem_without_reset(ccdr.peripheral.HSEM);
     let mut sem0 = hsem.sema(0);
+    let mut sem1 = hsem.sema(1);
+    let mut sem2 = hsem.sema(2);
 
-    info!("wake up cm4.");
+    sem1.enable_irq();
+
+    info!("cm7# wake up cm4.");
     sem0.fast_take();
     sem0.release(0);
     loop {
         if ccdr.rcc.is_d2_domain_available() { break; }
     }
+
+    info!("wait to initialize D2 domain");
+    loop {
+        if sem1.status_irq() {
+            sem1.clear_irq();
+            break;
+        }
+    }
+
+    info!("setup shared ringbuffer");
+    let mut shared_ringbuffer = unsafe {
+        shared_ringbuffer::SharedRingBuffer::<1024,8,fn(),fn()>::assign(SHARED_RINGBUFFER,
+                                                                        SHARED_RINGBUFFER_SIZE,
+                                                                        None::<(fn(),fn())>)
+    };
 
     let gpiob = dp.GPIOB.split(ccdr.peripheral.GPIOB);
     let gpiod = dp.GPIOD.split(ccdr.peripheral.GPIOD);
@@ -110,20 +131,28 @@ fn main() -> ! {
     let _ = writeln!(usart_tx,"start blinking LD1                  \r");
 
     let mut console =
-        unsafe { console::Console::new(
-            &mut CONSOLE_BUFFER,
-            "cm7> ",
-            move || {
-                match usart_rx.read() {
-                    Ok(c) => {
-                        Some(c)
-                    },
-                    Err(_) => None
-                }
-            },
-            move |c| {
-                block!(usart_tx.write(c)).ok();
-            }) };
+        unsafe {
+            console::Console::new(
+                &mut CONSOLE_BUFFER,
+                "cm7> ",
+                move || {
+                    match usart_rx.read() {
+                        Ok(c) => {
+                            Some(c)
+                        },
+                        Err(_) => None
+                    }
+                },
+                move |c| {
+                    block!(usart_tx.write(c)).ok();
+                },
+                Some(move |command:&str| {
+                    if sem2.take(1) {
+                        shared_ringbuffer.write();
+                        sem2.release(1);
+                    }
+                }))
+        };
 
     let mut prev_blink = false;
     loop {
