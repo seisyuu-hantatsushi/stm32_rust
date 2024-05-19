@@ -3,6 +3,7 @@ use core::iter::Iterator;
 use core::option::Option;
 use core::option::Option::*;
 use core::ops::FnMut;
+use core::str;
 
 use log::debug;
 
@@ -20,10 +21,11 @@ enum InputMode {
     Normal, Esc, CsiFirst
 }
 
-pub struct Console<Getc, Putc>
+pub struct Console<Getc, Putc, InputStr>
 where
     Getc: FnMut() -> Option<u8>,
-    Putc: FnMut(u8)
+    Putc: FnMut(u8),
+    InputStr: FnMut(&str)
 {
     cursor_pos: usize,
     tail_pos: usize,
@@ -32,12 +34,14 @@ where
     buffer: &'static mut [u8],
     prompt: &'static str,
     getc: Getc,
-    putc: Putc
+    putc: Putc,
+    input_str: Option<InputStr>
 }
 
-impl<Getc,Putc> Console<Getc,Putc>
+impl<Getc,Putc,InputStr> Console<Getc,Putc,InputStr>
 where Getc: FnMut() -> Option<u8>,
       Putc: FnMut(u8),
+      InputStr: FnMut(&str)
 {
     fn move_cursor_prev(&mut self) {
         for c in CURSOL_PREV {
@@ -63,6 +67,11 @@ where Getc: FnMut() -> Option<u8>,
             match c {
                 CR => {
                     //debug!("input CR");
+                    if let Some(ref mut input_str) = (*self).input_str {
+                        if let Ok(command) = str::from_utf8(&(*self).buffer) {
+                            (input_str)(command);
+                        }
+                    }
                     ((*self).putc)(LF);
                     ((*self).putc)(CR);
                     (*self).cursor_pos = 0;
@@ -197,7 +206,8 @@ where Getc: FnMut() -> Option<u8>,
     pub unsafe fn new(buffer: &'static mut [u8],
                       prompt: &'static str,
                       getc : Getc,
-                      mut putc : Putc) -> Self {
+                      mut putc : Putc,
+                      input_str: Option<InputStr>) -> Self {
 
         for c in prompt.chars() {
             (putc)(c as u8)
@@ -212,12 +222,13 @@ where Getc: FnMut() -> Option<u8>,
             prompt,
             getc,
             putc,
+            input_str,
         }
     }
 
     pub fn input(&mut self) {
         if let Some(c) = (self.getc)() {
-            debug!("input {:02x}", c);
+            //debug!("input {:02x}", c);
             if self.tail_pos >= self.buffer.len() { return (); }
             match self.input_mode {
                 InputMode::Normal => self.input_normal(c),
@@ -227,4 +238,9 @@ where Getc: FnMut() -> Option<u8>,
         }
     }
 
+    pub fn output(&mut self, message: &str) {
+        for c in message.bytes() {
+            (self.putc)(c)
+        }
+    }
 }
