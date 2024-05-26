@@ -6,8 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["log-rtt", "smps", "example-smps", "hsem", "log-level-debug"]
-#default = ["smps", "example-smps", "hsem"]
+#default = ["log-rtt", "smps", "example-smps", "hsem", "log-level-debug"]
+default = ["smps", "example-smps", "hsem"]
 log-rtt = []
 smps = []
 example-smps = []

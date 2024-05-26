@@ -32,11 +32,11 @@ mod utilities;
 
 static SEC_COUNTER: AtomicU32 = AtomicU32::new(0);
 static MESSAGE_NOTIFY: AtomicBool = AtomicBool::new(false);
-static HSEM_CH0: cm_interrupt::Mutex<RefCell<Option<hsem::Sema>>> =
+static HSEM_CH0: cm_interrupt::Mutex<RefCell<Option<hsem::Sema<0>>>> =
     cm_interrupt::Mutex::new(RefCell::new(None));
-static HSEM_CH1: cm_interrupt::Mutex<RefCell<Option<hsem::Sema>>> =
+static HSEM_CH1: cm_interrupt::Mutex<RefCell<Option<hsem::Sema<1>>>> =
     cm_interrupt::Mutex::new(RefCell::new(None));
-static HSEM_CH2: cm_interrupt::Mutex<RefCell<Option<hsem::Sema>>> =
+static HSEM_CH2: cm_interrupt::Mutex<RefCell<Option<hsem::Sema<2>>>> =
     cm_interrupt::Mutex::new(RefCell::new(None));
 static TIMER: cm_interrupt::Mutex<RefCell<Option<timer::Timer<pac::TIM3>>>> =
     cm_interrupt::Mutex::new(RefCell::new(None));
@@ -62,7 +62,7 @@ fn main() -> ! {
 
     dp.EXTI.listen(exti::Event::HSEM1);
 
-    let sem0 = hsem.sema(0);
+    let sem0 = hsem.sema0();
     cm_interrupt::free(|cs| {
         HSEM_CH0.borrow(cs).replace(Some(sem0));
         HSEM_CH0.borrow(cs).borrow_mut().as_mut().unwrap().enable_irq();
@@ -83,7 +83,7 @@ fn main() -> ! {
 
     let clocks = rcc.get_frozen_core_clocks().expect("could not get clocks");
 
-    let mut sem1 = hsem.sema(1);
+    let mut sem1 = hsem.sema1();
     let mut shared_ringbuffer = unsafe {
         let ptr : *mut u8 = SHARED_RINGBUFFER as *mut u8;
         ptr.write_bytes(0, SHARED_RINGBUFFER_SIZE as usize);
@@ -94,7 +94,7 @@ fn main() -> ! {
     sem1.fast_take();
     sem1.release(0);
 
-    let sem2 = hsem.sema(2);
+    let sem2 = hsem.sema2();
     cm_interrupt::free(|cs| {
         HSEM_CH2.borrow(cs).replace(Some(sem2));
         HSEM_CH2.borrow(cs).borrow_mut().as_mut().unwrap().enable_irq();
@@ -181,10 +181,13 @@ fn main() -> ! {
                                                             None
                                                         }){
             if notify {
-                let p = shared_ringbuffer.read();
-                //let mut buf : [u8;128] = [0u8;128];
-                console.output("notify\r\n");
-                //write!(console,"notify {},{}\r\n", p.0, p.1);
+                let mut recvbuf = [0u8;1024];
+                match shared_ringbuffer.read(&mut recvbuf) {
+                    Ok(readsize) => {
+                        let _ = write!(console,">cm7> {}\r\n", core::str::from_utf8(&recvbuf).unwrap());
+                    },
+                    Err(e) => { debug!("read error: {}", e); }
+                };
             }
         }
     }
