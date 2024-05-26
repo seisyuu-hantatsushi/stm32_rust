@@ -67,9 +67,9 @@ fn main() -> ! {
     let ccdr = rcc.sys_ck(200.MHz()).freeze(pwrcfg, &dp.SYSCFG);
 
     let hsem = dp.HSEM.hsem_without_reset(ccdr.peripheral.HSEM);
-    let mut sem0 = hsem.sema(0);
-    let mut sem1 = hsem.sema(1);
-    let mut sem2 = hsem.sema(2);
+    let mut sem0 = hsem.sema0();
+    let mut sem1 = hsem.sema1();
+    let mut sem2 = hsem.sema2();
 
     sem1.enable_irq();
 
@@ -148,7 +148,8 @@ fn main() -> ! {
                 },
                 Some(move |command:&str| {
                     if sem2.take(1) {
-                        shared_ringbuffer.write();
+                        debug!("send {} <{}>", command.len(), command);
+                        let _ = shared_ringbuffer.write(command.as_bytes());
                         sem2.release(1);
                     }
                 }))

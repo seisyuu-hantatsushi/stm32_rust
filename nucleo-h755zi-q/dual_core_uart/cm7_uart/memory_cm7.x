@@ -32,6 +32,8 @@ MEMORY
   /* Backup SRAM */
   BSRAM : ORIGIN = 0x38800000, LENGTH = 4K
 
+  SRAM3_NONCACHE : ORIGIN = 0x10040000, LENGTH = 32K
+
   /* Instruction TCM */
   ITCM  : ORIGIN = 0x00000000, LENGTH = 64K
 }
@@ -46,6 +48,10 @@ _stack_start = ORIGIN(RAM) + LENGTH(RAM);
 
 /* These sections are used for some of the examples */
 SECTIONS {
+  .sram3_uncache (NOLOAD) : ALIGN(4) {
+    *(.sram3_uncache .sram3_uncache.*);
+    . = ALIGN(4);
+    } > SRAM3_NONCACHE
   .axisram (NOLOAD) : ALIGN(8) {
     *(.axisram .axisram.*);
     . = ALIGN(8);
