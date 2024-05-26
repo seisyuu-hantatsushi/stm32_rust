@@ -4,6 +4,7 @@ use core::option::Option;
 use core::option::Option::*;
 use core::ops::FnMut;
 use core::str;
+use core::fmt::Write;
 
 use log::debug;
 
@@ -38,6 +39,19 @@ where
     input_str: Option<InputStr>
 }
 
+impl<Getc, Putc, InputStr> Write for Console<Getc, Putc, InputStr>
+where Getc: FnMut() -> Option<u8>,
+      Putc: FnMut(u8),
+      InputStr: FnMut(&str)
+{
+    fn write_str(&mut self, s: &str) -> Result<(),core::fmt::Error> {
+        for c in s.chars() {
+            ((*self).putc)(c as u8);
+        }
+        Ok(())
+    }
+}
+
 impl<Getc,Putc,InputStr> Console<Getc,Putc,InputStr>
 where Getc: FnMut() -> Option<u8>,
       Putc: FnMut(u8),
@@ -68,7 +82,12 @@ where Getc: FnMut() -> Option<u8>,
                 CR => {
                     //debug!("input CR");
                     if let Some(ref mut input_str) = (*self).input_str {
-                        if let Ok(command) = str::from_utf8(&(*self).buffer) {
+                        let mut len = 0;
+                        for b in &mut (*self).buffer.iter() {
+                            if *b == 0 { break; };
+                            len += 1;
+                        }
+                        if let Ok(command) = str::from_utf8(&(*self).buffer[..(len+1)]) {
                             (input_str)(command);
                         }
                     }
