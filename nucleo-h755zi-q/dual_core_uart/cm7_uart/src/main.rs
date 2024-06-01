@@ -90,9 +90,8 @@ fn main() -> ! {
 
     info!("setup shared ringbuffer");
     let mut shared_ringbuffer = unsafe {
-        shared_ringbuffer::SharedRingBuffer::<1024,8,fn(),fn()>::assign(SHARED_RINGBUFFER,
-                                                                        SHARED_RINGBUFFER_SIZE,
-                                                                        None::<(fn(),fn())>)
+        shared_ringbuffer::SharedRingBuffer::<1024,8>::assign(SHARED_RINGBUFFER,
+                                                              SHARED_RINGBUFFER_SIZE)
     };
 
     let gpiob = dp.GPIOB.split(ccdr.peripheral.GPIOB);

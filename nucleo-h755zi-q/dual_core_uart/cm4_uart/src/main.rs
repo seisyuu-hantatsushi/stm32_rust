@@ -24,8 +24,10 @@ use embedded_lib::{console,shared_ringbuffer};
 #[link_section = ".sram2"]
 static mut CONSOLE_BUFFER: [u8; 1024] = [0u8; 1024];
 
-const SHARED_RINGBUFFER: *mut u32 = 0x10040000 as *mut u32; // in D2 Domain, Write-Through
-const SHARED_RINGBUFFER_SIZE: u32 = 512+1024*8;
+const CM7_TO_CM4_SHARED_RINGBUFFER: *mut u32 = 0x10040000 as *mut u32; // in D2 Domain, Write-Through
+const CM7_TO_CM4_SHARED_RINGBUFFER_SIZE: u32 = 512+1024*8; // 
+const CM4_TO_CM7_SHARED_RINGBUFFER: *mut u32 = 0x10042400 as *mut u32; // in D2 Domain, Write-Through
+const CM4_TO_CM7_SHARED_RINGBUFFER_SIZE: u32 = 512+1024*8; //
 
 #[macro_use]
 mod utilities;
@@ -33,8 +35,6 @@ mod utilities;
 static SEC_COUNTER: AtomicU32 = AtomicU32::new(0);
 static MESSAGE_NOTIFY: AtomicBool = AtomicBool::new(false);
 static HSEM_CH0: cm_interrupt::Mutex<RefCell<Option<hsem::Sema<0>>>> =
-    cm_interrupt::Mutex::new(RefCell::new(None));
-static HSEM_CH1: cm_interrupt::Mutex<RefCell<Option<hsem::Sema<1>>>> =
     cm_interrupt::Mutex::new(RefCell::new(None));
 static HSEM_CH2: cm_interrupt::Mutex<RefCell<Option<hsem::Sema<2>>>> =
     cm_interrupt::Mutex::new(RefCell::new(None));
@@ -84,13 +84,22 @@ fn main() -> ! {
     let clocks = rcc.get_frozen_core_clocks().expect("could not get clocks");
 
     let mut sem1 = hsem.sema1();
-    let mut shared_ringbuffer = unsafe {
-        let ptr : *mut u8 = SHARED_RINGBUFFER as *mut u8;
-        ptr.write_bytes(0, SHARED_RINGBUFFER_SIZE as usize);
-        shared_ringbuffer::SharedRingBuffer::<1024,8,fn(),fn()>::assign(SHARED_RINGBUFFER,
-                                                                        SHARED_RINGBUFFER_SIZE,
-                                                                        None::<(fn(),fn())>)
+    let mut cm7_to_cm4_shared_ringbuffer = unsafe {
+        let ptr : *mut u8 = CM7_TO_CM4_SHARED_RINGBUFFER as *mut u8;
+        ptr.write_bytes(0, CM7_TO_CM4_SHARED_RINGBUFFER_SIZE as usize);
+        shared_ringbuffer::SharedRingBuffer::<1024,8>::assign(CM7_TO_CM4_SHARED_RINGBUFFER,
+                                                              CM7_TO_CM4_SHARED_RINGBUFFER_SIZE)
     };
+    /*
+    let mut sem3 = hsem.sema3();
+    let mut cm4_to_cm7_shared_ringbuffer = unsafe {
+        let ptr : *mut u8 = CM4_TO_CM7_SHARED_RINGBUFFER as *mut u8;
+        ptr.write_bytes(0, CM4_TO_CM7_SHARED_RINGBUFFER_SIZE as usize);
+        shared_ringbuffer::SharedRingBuffer::<1024,8,fn(),fn()>::assign(CM4_TO_CM7_SHARED_RINGBUFFER,
+                                                                        CM4_TO_CM7_SHARED_RINGBUFFER_SIZE,
+                                                                        Some::<(fn(),fn())>)
+    };
+*/
     sem1.fast_take();
     sem1.release(0);
 
@@ -182,7 +191,7 @@ fn main() -> ! {
                                                         }){
             if notify {
                 let mut recvbuf = [0u8;1024];
-                match shared_ringbuffer.read(&mut recvbuf) {
+                match cm7_to_cm4_shared_ringbuffer.read(&mut recvbuf) {
                     Ok(readsize) => {
                         let _ = write!(console,">cm7> {}\r\n", core::str::from_utf8(&recvbuf).unwrap());
                     },
