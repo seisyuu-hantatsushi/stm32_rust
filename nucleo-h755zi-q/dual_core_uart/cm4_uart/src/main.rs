@@ -25,7 +25,7 @@ use embedded_lib::{console,shared_ringbuffer};
 static mut CONSOLE_BUFFER: [u8; 1024] = [0u8; 1024];
 
 const CM7_TO_CM4_SHARED_RINGBUFFER: *mut u32 = 0x10040000 as *mut u32; // in D2 Domain, Write-Through
-const CM7_TO_CM4_SHARED_RINGBUFFER_SIZE: u32 = 512+1024*8; // 
+const CM7_TO_CM4_SHARED_RINGBUFFER_SIZE: u32 = 512+1024*8; //
 const CM4_TO_CM7_SHARED_RINGBUFFER: *mut u32 = 0x10042400 as *mut u32; // in D2 Domain, Write-Through
 const CM4_TO_CM7_SHARED_RINGBUFFER_SIZE: u32 = 512+1024*8; //
 
@@ -43,6 +43,38 @@ static TIMER: cm_interrupt::Mutex<RefCell<Option<timer::Timer<pac::TIM3>>>> =
 static LED_BLINK: cm_interrupt::Mutex<RefCell<bool>> =
     cm_interrupt::Mutex::new(RefCell::new(false));
 
+struct HardwareCriticalSection {
+    procid : u8,
+    sem: RefCell<hsem::Sema<3>>
+}
+
+struct HardwareCriticalSectionLock<'a> {
+    procid : u8,
+    sem: &'a RefCell<hsem::Sema<3>>
+}
+
+impl<'a> HardwareCriticalSectionLock<'a> {
+    fn new(procid : u8, sem: &'a RefCell<hsem::Sema<3>>) -> Self {
+        HardwareCriticalSectionLock {
+            procid,
+            sem
+        }
+    }
+}
+
+impl Drop for HardwareCriticalSectionLock<'_> {
+    fn drop(&mut self) {
+        self.sem.borrow_mut().release(self.procid);
+    }
+}
+
+impl shared_ringbuffer::CriticalSection for HardwareCriticalSection {
+    fn lock(&self) -> Result<HardwareCriticalSectionLock,shared_ringbuffer::SharedRingBufferError> {
+        while !self.sem.borrow_mut().take(self.procid) {};
+        Ok(HardwareCriticalSectionLock::new( self.procid, &self.sem ))
+    }
+}
+
 #[entry]
 fn main() -> ! {
     utilities::logger::init();
@@ -58,7 +90,7 @@ fn main() -> ! {
 
     // Activate HSEM notification.
 
-    let hsem = dp.HSEM.hsem(prec.HSEM);
+    let mut hsem = dp.HSEM.hsem(prec.HSEM);
 
     dp.EXTI.listen(exti::Event::HSEM1);
 
@@ -90,16 +122,21 @@ fn main() -> ! {
         shared_ringbuffer::SharedRingBuffer::<1024,8>::assign(CM7_TO_CM4_SHARED_RINGBUFFER,
                                                               CM7_TO_CM4_SHARED_RINGBUFFER_SIZE)
     };
-    /*
-    let mut sem3 = hsem.sema3();
+
+    let hwcs = HardwareCriticalSection {
+        procid: 1,
+        sem: RefCell::new(hsem.sema3())
+    };
+
     let mut cm4_to_cm7_shared_ringbuffer = unsafe {
         let ptr : *mut u8 = CM4_TO_CM7_SHARED_RINGBUFFER as *mut u8;
         ptr.write_bytes(0, CM4_TO_CM7_SHARED_RINGBUFFER_SIZE as usize);
-        shared_ringbuffer::SharedRingBuffer::<1024,8,fn(),fn()>::assign(CM4_TO_CM7_SHARED_RINGBUFFER,
-                                                                        CM4_TO_CM7_SHARED_RINGBUFFER_SIZE,
-                                                                        Some::<(fn(),fn())>)
+        shared_ringbuffer::SharedRingBufferWithCS::<1024,8, HardwareCriticalSection>
+            ::assign(CM4_TO_CM7_SHARED_RINGBUFFER,
+                     CM4_TO_CM7_SHARED_RINGBUFFER_SIZE,
+                     hwcs)
     };
-*/
+
     sem1.fast_take();
     sem1.release(0);
 
@@ -154,7 +191,10 @@ fn main() -> ! {
             move |c| {
                 block!(usart_tx.write(c)).ok();
             },
-            None::<fn(&str)>)
+            Some(move |command:&str| {
+                //debug!("send {} <{}>", command.len(), command);
+                let _ = cm4_to_cm7_shared_ringbuffer.write(command.as_bytes());
+            }))
         };
 
     // Configure PE1 as output.
@@ -170,6 +210,7 @@ fn main() -> ! {
             let current = *LED_BLINK.borrow(cs).borrow();
             update = prev_blink != current;
             if update {
+                debug!("update led");
                 if current {
                     led.set_high();
                 } else {
@@ -204,7 +245,7 @@ fn main() -> ! {
 
 #[stm32h7xx_hal::interrupt]
 fn HSEM1() {
-    //debug!("HSEM1 fired!");
+    debug!("HSEM1 fired!");
     cm_interrupt::free(|cs| {
         let mut binding = HSEM_CH0.borrow(cs).borrow_mut();
         let sem0 = binding.as_mut().unwrap();
@@ -224,6 +265,7 @@ fn HSEM1() {
 #[stm32h7xx_hal::interrupt]
 fn TIM3() {
     SEC_COUNTER.fetch_add(1, Ordering::SeqCst);
+    debug!("TIM3 fired!");
     cortex_m::interrupt::free(|cs| {
         let mut rc = TIMER.borrow(cs).borrow_mut();
         let timer = rc.as_mut().unwrap();
