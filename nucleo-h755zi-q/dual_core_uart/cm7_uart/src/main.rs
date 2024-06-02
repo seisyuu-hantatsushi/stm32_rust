@@ -5,13 +5,13 @@
 use core::{
     fmt::Write,
     cell::RefCell,
-    sync::atomic::{AtomicU32, Ordering},
+    sync::atomic::{AtomicU32, AtomicBool, Ordering},
 };
 
 use cortex_m_rt::entry;
 use cortex_m::interrupt as cm_interrupt;
 use cortex_m::peripheral::NVIC;
-use stm32h7xx_hal::{pac, interrupt, timer, block, prelude::*};
+use stm32h7xx_hal::{pac, interrupt, timer, block, hsem, prelude::*};
 use stm32h7xx_hal::time::MilliSeconds;
 use log::{info,debug};
 use embedded_lib::{console,shared_ringbuffer};
@@ -19,7 +19,40 @@ use embedded_lib::{console,shared_ringbuffer};
 #[macro_use]
 mod utilities;
 
+struct HardwareCriticalSection {
+    procid : u8,
+    sem: RefCell<hsem::SemaOp<3>>
+}
+
+struct HardwareCriticalSectionLock<'a> {
+    procid : u8,
+    sem: &'a RefCell<hsem::SemaOp<3>>
+}
+
+impl<'a> HardwareCriticalSectionLock<'a> {
+    fn new(procid : u8, sem: &'a RefCell<hsem::SemaOp<3>>) -> Self {
+        HardwareCriticalSectionLock {
+            procid,
+            sem
+        }
+    }
+}
+
+impl Drop for HardwareCriticalSectionLock<'_> {
+    fn drop(&mut self) {
+        self.sem.borrow_mut().release(self.procid);
+    }
+}
+
+impl shared_ringbuffer::CriticalSection for HardwareCriticalSection {
+    fn lock(&self) -> Result<HardwareCriticalSectionLock,shared_ringbuffer::SharedRingBufferError> {
+        while !self.sem.borrow_mut().take(self.procid) {};
+        Ok(HardwareCriticalSectionLock::new( self.procid, &self.sem ))
+    }
+}
+
 static SEC_COUNTER: AtomicU32 = AtomicU32::new(0);
+static MESSAGE_NOTIFY: AtomicBool = AtomicBool::new(false);
 static TIMER: cm_interrupt::Mutex<RefCell<Option<timer::Timer<pac::TIM2>>>> =
     cm_interrupt::Mutex::new(RefCell::new(None));
 static LED_BLINK: cm_interrupt::Mutex<RefCell<bool>> =
@@ -28,8 +61,10 @@ static LED_BLINK: cm_interrupt::Mutex<RefCell<bool>> =
 #[link_section = ".axisram"]
 static mut CONSOLE_BUFFER: [u8; 1024] = [0u8; 1024];
 
-const SHARED_RINGBUFFER: *mut u32 = 0x10040000 as *mut u32; // in D2 Domain, Write-Through
-const SHARED_RINGBUFFER_SIZE: u32 = 512+1024*8;
+const CM7_TO_CM4_SHARED_RINGBUFFER: *mut u32 = 0x10040000 as *mut u32; // in D2 Domain, Write-Through
+const CM7_TO_CM4_SHARED_RINGBUFFER_SIZE: u32 = 512+1024*8;
+const CM4_TO_CM7_SHARED_RINGBUFFER: *mut u32 = 0x10042400 as *mut u32; // in D2 Domain, Write-Through
+const CM4_TO_CM7_SHARED_RINGBUFFER_SIZE: u32 = 512+1024*8; //
 
 #[allow(dead_code)]
 fn type_of<T>(_: &T) -> &'static str {
@@ -66,11 +101,10 @@ fn main() -> ! {
     info!("Setup RCC...                  ");
     let ccdr = rcc.sys_ck(200.MHz()).freeze(pwrcfg, &dp.SYSCFG);
 
-    let hsem = dp.HSEM.hsem_without_reset(ccdr.peripheral.HSEM);
+    let mut hsem = dp.HSEM.hsem_without_reset(ccdr.peripheral.HSEM);
     let mut sem0 = hsem.sema0();
     let mut sem1 = hsem.sema1();
     let mut sem2 = hsem.sema2();
-
     sem1.enable_irq();
 
     info!("cm7# wake up cm4.");
@@ -89,10 +123,25 @@ fn main() -> ! {
     }
 
     info!("setup shared ringbuffer");
-    let mut shared_ringbuffer = unsafe {
-        shared_ringbuffer::SharedRingBuffer::<1024,8>::assign(SHARED_RINGBUFFER,
-                                                              SHARED_RINGBUFFER_SIZE)
+    let mut cm7_to_cm4_shared_ringbuffer = unsafe {
+        shared_ringbuffer::SharedRingBuffer::<1024,8>::assign(CM7_TO_CM4_SHARED_RINGBUFFER,
+                                                              CM7_TO_CM4_SHARED_RINGBUFFER_SIZE)
     };
+
+    let (sem3op, mut sem3intr) = hsem.sema3().split();
+    let hwcs = HardwareCriticalSection {
+        procid: 1,
+        sem: RefCell::new(sem3op)
+    };
+
+    let mut cm4_to_cm7_shared_ringbuffer = unsafe {
+        shared_ringbuffer::SharedRingBufferWithCS::<1024, 8, HardwareCriticalSection>
+            ::assign(CM4_TO_CM7_SHARED_RINGBUFFER,
+                     CM4_TO_CM7_SHARED_RINGBUFFER_SIZE,
+                     hwcs)
+    };
+
+    sem3intr.enable_irq();
 
     let gpiob = dp.GPIOB.split(ccdr.peripheral.GPIOB);
     let gpiod = dp.GPIOD.split(ccdr.peripheral.GPIOD);
@@ -148,7 +197,7 @@ fn main() -> ! {
                 Some(move |command:&str| {
                     if sem2.take(1) {
                         debug!("send {} <{}>", command.len(), command);
-                        let _ = shared_ringbuffer.write(command.as_bytes());
+                        let _ = cm7_to_cm4_shared_ringbuffer.write(command.as_bytes());
                         sem2.release(1);
                     }
                 }))
@@ -169,8 +218,36 @@ fn main() -> ! {
                 };
             }
             prev_blink = current;
+
+            if sem3intr.status_irq() {
+                MESSAGE_NOTIFY.store(true, Ordering::SeqCst);
+                sem3intr.clear_irq();
+            }
         });
+
         console.input();
+
+        if let Ok(notify) = MESSAGE_NOTIFY.fetch_update(Ordering::SeqCst,
+                                                        Ordering::SeqCst,
+                                                        |notify| if notify {
+                                                            Some(false)
+                                                        }
+                                                        else {
+                                                            None
+                                                        }){
+            if notify {
+                let mut recvbuf = [0u8;1024];
+                /*
+                match cm4_to_cm7_shared_ringbuffer.read(&mut recvbuf) {
+                    Ok(_readsize) => {
+                let _ = write!(console,">cm4> {}\r\n", core::str::from_utf8(&recvbuf).unwrap());
+                    },
+                    Err(e) => { debug!("read error: {}", e); }
+                }
+                 */
+                let _ = write!(console,">cm4> {}\r\n", "notify");
+            }
+        }
     }
 }
 
@@ -185,4 +262,3 @@ fn TIM2() {
         *led_blink = !(*led_blink);
     });
 }
-
