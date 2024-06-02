@@ -52,7 +52,6 @@ impl shared_ringbuffer::CriticalSection for HardwareCriticalSection {
 }
 
 static SEC_COUNTER: AtomicU32 = AtomicU32::new(0);
-static MESSAGE_NOTIFY: AtomicBool = AtomicBool::new(false);
 static TIMER: cm_interrupt::Mutex<RefCell<Option<timer::Timer<pac::TIM2>>>> =
     cm_interrupt::Mutex::new(RefCell::new(None));
 static LED_BLINK: cm_interrupt::Mutex<RefCell<bool>> =
@@ -128,7 +127,7 @@ fn main() -> ! {
                                                               CM7_TO_CM4_SHARED_RINGBUFFER_SIZE)
     };
 
-    let (sem3op, mut sem3intr) = hsem.sema3().split();
+    let (sem3op, _) = hsem.sema3().split();
     let hwcs = HardwareCriticalSection {
         procid: 1,
         sem: RefCell::new(sem3op)
@@ -140,8 +139,6 @@ fn main() -> ! {
                      CM4_TO_CM7_SHARED_RINGBUFFER_SIZE,
                      hwcs)
     };
-
-    sem3intr.enable_irq();
 
     let gpiob = dp.GPIOB.split(ccdr.peripheral.GPIOB);
     let gpiod = dp.GPIOD.split(ccdr.peripheral.GPIOD);
@@ -218,35 +215,19 @@ fn main() -> ! {
                 };
             }
             prev_blink = current;
-
-            if sem3intr.status_irq() {
-                MESSAGE_NOTIFY.store(true, Ordering::SeqCst);
-                sem3intr.clear_irq();
-            }
         });
 
         console.input();
 
-        if let Ok(notify) = MESSAGE_NOTIFY.fetch_update(Ordering::SeqCst,
-                                                        Ordering::SeqCst,
-                                                        |notify| if notify {
-                                                            Some(false)
-                                                        }
-                                                        else {
-                                                            None
-                                                        }){
-            if notify {
-                let mut recvbuf = [0u8;1024];
-                /*
-                match cm4_to_cm7_shared_ringbuffer.read(&mut recvbuf) {
-                    Ok(_readsize) => {
-                let _ = write!(console,">cm4> {}\r\n", core::str::from_utf8(&recvbuf).unwrap());
-                    },
-                    Err(e) => { debug!("read error: {}", e); }
-                }
-                 */
-                let _ = write!(console,">cm4> {}\r\n", "notify");
-            }
+        {
+            let mut recvbuf = [0u8;1024];
+            match cm4_to_cm7_shared_ringbuffer.read(&mut recvbuf) {
+                Ok(_readsize) => {
+                    let _ = write!(console,">cm4> {}\r\n", core::str::from_utf8(&recvbuf).unwrap());
+                },
+                Err(shared_ringbuffer::SharedRingBufferError::NoData) => {},
+                Err(e) => { debug!("read error: {}", e); }
+            };
         }
     }
 }
